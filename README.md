@@ -1,6 +1,6 @@
 # Ansible Nginx Version Update Playbook
 
-Zero-downtime Ansible playbook for updating Nginx on production application servers.
+Zero-downtime Ansible playbook for updating Nginx on  application servers.
 
 ## Overview
 
