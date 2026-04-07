@@ -1,0 +1,153 @@
+---
+# nginx-update.yml
+# Zero-downtime Nginx update playbook with backup and validation
+
+- name: Update Nginx on web servers
+  hosts: webservers
+  become: yes
+  serial: 1  # Update one server at a time to maintain availability
+  
+  vars:
+    nginx_version: "latest"  # Or specify version like "1.24.*"
+    backup_dir: "/backup/nginx"
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+  
+  pre_tasks:
+    - name: Display target server
+      debug:
+        msg: "Updating Nginx on {{ inventory_hostname }}"
+    
+    - name: Check current Nginx version
+      command: nginx -v
+      register: current_version
+      ignore_errors: yes
+      changed_when: false
+    
+    - name: Display current version
+      debug:
+        msg: "Current Nginx version: {{ current_version.stderr }}"
+      when: current_version.rc == 0
+    
+    - name: Verify Nginx is running
+      systemd:
+        name: nginx
+        state: started
+      check_mode: yes
+      register: nginx_status
+    
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+  
+  tasks:
+    # Backup Phase
+    - name: Backup Nginx main config
+      copy:
+        src: /etc/nginx/nginx.conf
+        dest: "{{ backup_dir }}/nginx.conf.{{ timestamp }}"
+        remote_src: yes
+        mode: '0644'
+      
+    - name: Backup sites-available directory
+      archive:
+        path: /etc/nginx/sites-available/
+        dest: "{{ backup_dir }}/sites-available-{{ timestamp }}.tar.gz"
+        format: gz
+    
+    - name: Backup sites-enabled directory
+      archive:
+        path: /etc/nginx/sites-enabled/
+        dest: "{{ backup_dir }}/sites-enabled-{{ timestamp }}.tar.gz"
+        format: gz
+    
+    # Update Phase
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Update Nginx package
+      apt:
+        name: nginx{% if nginx_version != 'latest' %}={{ nginx_version }}{% endif %}
+        state: "{% if nginx_version == 'latest' %}latest{% else %}present{% endif %}"
+        update_cache: yes
+      register: nginx_update
+    
+    - name: Validate Nginx configuration syntax
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+    
+    - name: Display config validation result
+      debug:
+        msg: "{{ nginx_test.stderr_lines }}"
+    
+    - name: Reload Nginx service
+      systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_update.changed
+    
+    # Verification Phase
+    - name: Wait for Nginx to be ready
+      wait_for:
+        port: 80
+        delay: 2
+        timeout: 30
+    
+    - name: Verify Nginx is serving requests
+      uri:
+        url: "http://localhost"
+        status_code: [200, 301, 302]
+      register: health_check
+      retries: 3
+      delay: 2
+    
+    - name: Check updated Nginx version
+      command: nginx -v
+      register: new_version
+      changed_when: false
+    
+    - name: Display updated version
+      debug:
+        msg: "Updated Nginx version: {{ new_version.stderr }}"
+    
+    - name: Verify service status
+      systemd:
+        name: nginx
+      register: final_status
+    
+    - name: Assert Nginx is active
+      assert:
+        that:
+          - final_status.status.ActiveState == "active"
+        fail_msg: "Nginx service is not active after update"
+        success_msg: "Nginx service is healthy"
+  
+  post_tasks:
+    - name: Update summary
+      debug:
+        msg: 
+          - "=== Update Complete for {{ inventory_hostname }} ==="
+          - "Before: {{ current_version.stderr | default('Unknown') }}"
+          - "After: {{ new_version.stderr }}"
+          - "Backup location: {{ backup_dir }}/"
+          - "Status: {{ final_status.status.ActiveState }}"
+
+# Handler for emergency rollback
+  handlers:
+    - name: Rollback Nginx config
+      copy:
+        src: "{{ backup_dir }}/nginx.conf.{{ timestamp }}"
+        dest: /etc/nginx/nginx.conf
+        remote_src: yes
+      listen: "rollback"
+    
+    - name: Restart Nginx after rollback
+      systemd:
+        name: nginx
+        state: restarted
+      listen: "rollback"

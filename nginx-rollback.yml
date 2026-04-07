@@ -1,0 +1,87 @@
+---
+# nginx-rollback.yml
+# Rollback Nginx to previous configuration from backup
+
+- name: Rollback Nginx configuration
+  hosts: webservers
+  become: yes
+  serial: 1
+  
+  vars:
+    backup_dir: "/backup/nginx"
+    # If not specified, uses the most recent backup
+    backup_timestamp: "{{ backup_timestamp | default('') }}"
+  
+  tasks:
+    - name: Find latest backup if timestamp not specified
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "nginx.conf.*"
+        use_regex: no
+      register: backup_files
+      when: backup_timestamp == ""
+    
+    - name: Set backup file path (latest)
+      set_fact:
+        backup_file: "{{ backup_files.files | sort(attribute='mtime') | last | map(attribute='path') | first }}"
+      when: 
+        - backup_timestamp == ""
+        - backup_files.matched > 0
+    
+    - name: Set backup file path (specific timestamp)
+      set_fact:
+        backup_file: "{{ backup_dir }}/nginx.conf.{{ backup_timestamp }}"
+      when: backup_timestamp != ""
+    
+    - name: Verify backup file exists
+      stat:
+        path: "{{ backup_file }}"
+      register: backup_stat
+      failed_when: not backup_stat.stat.exists
+    
+    - name: Display rollback info
+      debug:
+        msg: 
+          - "Rolling back Nginx configuration on {{ inventory_hostname }}"
+          - "Using backup: {{ backup_file }}"
+    
+    - name: Stop Nginx service
+      systemd:
+        name: nginx
+        state: stopped
+    
+    - name: Restore Nginx configuration from backup
+      copy:
+        src: "{{ backup_file }}"
+        dest: /etc/nginx/nginx.conf
+        remote_src: yes
+        mode: '0644'
+        backup: yes
+    
+    - name: Validate restored configuration
+      command: nginx -t
+      register: config_test
+      changed_when: false
+    
+    - name: Display validation result
+      debug:
+        msg: "{{ config_test.stderr_lines }}"
+    
+    - name: Start Nginx service
+      systemd:
+        name: nginx
+        state: started
+    
+    - name: Verify Nginx is serving requests
+      uri:
+        url: "http://localhost"
+        status_code: [200, 301, 302]
+      retries: 3
+      delay: 2
+    
+    - name: Rollback summary
+      debug:
+        msg:
+          - "=== Rollback Complete for {{ inventory_hostname }} ==="
+          - "Configuration restored from: {{ backup_file }}"
+          - "Nginx service is active and responding"
