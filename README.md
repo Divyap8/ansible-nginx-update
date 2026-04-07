@@ -94,53 +94,6 @@ ansible-playbook -i inventory.ini nginx-update.yml
    └─ Display summary across all servers
 ```
 
-## Safety Features
-
-### Serial Execution
-```yaml
-serial: 1  # Update one server at a time
-```
-If server 1 fails, playbook stops before touching server 2 or 3.
-
-### Configuration Validation
-```yaml
-- name: Validate Nginx config
-  command: nginx -t
-```
-Playbook aborts if config syntax is invalid.
-
-### Automatic Rollback
-If update fails, restore from backup:
-```bash
-ansible-playbook -i inventory.ini nginx-rollback.yml
-```
-
-## Customization
-
-### Change Nginx Version
-
-Edit `nginx-update.yml`:
-```yaml
-vars:
-  nginx_version: "1.24.*"  # Specific version
-  # Or use "latest" for newest available
-```
-
-### Custom Backup Location
-
-```yaml
-vars:
-  backup_dir: "/backup/nginx"
-```
-
-### Add Custom Health Check
-
-```yaml
-- name: Custom health check
-  uri:
-    url: "http://localhost/health"
-    status_code: 200
-```
 
 ## Files
 
@@ -176,27 +129,6 @@ web2.example.com           : ok=8    changed=3    unreachable=0    failed=0
 web3.example.com           : ok=8    changed=3    unreachable=0    failed=0
 ```
 
-## Production Best Practices
-
-✓ **Always run --check first** to preview changes  
-✓ **Test on staging** before production  
-✓ **Schedule maintenance window** even though it's zero-downtime  
-✓ **Keep backups** for at least 30 days  
-✓ **Monitor logs** during and after update  
-✓ **Have rollback plan** ready before starting
-
-## Rollback
-
-If something goes wrong:
-
-```bash
-# Restore from backup (uses latest backup by default)
-ansible-playbook -i inventory.ini nginx-rollback.yml
-
-# Or restore from specific backup
-ansible-playbook -i inventory.ini nginx-rollback.yml -e "backup_timestamp=20240407_153000"
-```
-
 ## Integration with CI/CD
 
 This playbook can be triggered from:
@@ -213,24 +145,3 @@ stage('Update Nginx') {
     }
 }
 ```
-
-## Troubleshooting
-
-**Playbook fails on config validation:**
-- Check `/var/log/nginx/error.log` on the failed server
-- Review backup files in `/backup/nginx/`
-- Run rollback playbook to restore
-
-**Connection timeout:**
-- Verify SSH keys are correct
-- Check security groups allow SSH from Ansible control machine
-- Test manual SSH: `ssh -i key.pem ubuntu@server-ip`
-
-**Nginx won't start after update:**
-- Check for conflicting processes on port 80/443
-- Review systemd logs: `journalctl -u nginx -n 50`
-- Run rollback immediately
-
-## Author
-
-Production Ansible playbook for safe Nginx updates on live application servers. Used in multi-server environments with zero-downtime requirements.
