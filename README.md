@@ -129,19 +129,3 @@ web2.example.com           : ok=8    changed=3    unreachable=0    failed=0
 web3.example.com           : ok=8    changed=3    unreachable=0    failed=0
 ```
 
-## Integration with CI/CD
-
-This playbook can be triggered from:
-- Jenkins pipeline
-- GitLab CI/CD
-- Bitbucket Pipelines
-- GitHub Actions
-
-Example Jenkins stage:
-```groovy
-stage('Update Nginx') {
-    steps {
-        sh 'ansible-playbook -i inventory.ini nginx-update.yml'
-    }
-}
-```
